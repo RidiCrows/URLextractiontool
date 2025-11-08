@@ -1,11 +1,9 @@
 // ==UserScript==
-// @name         Static M3U8 Extractor (Button Only)
+// @name         Static M3U8 Extractor (No Dev Permission)
 // @namespace    http://tampermonkey.net/
-// @version      2.5
-// @description  提取M3U8链接，只显示一个复制按钮，自动去掉播放器前缀
+// @version      2.6
+// @description  提取 M3U8 链接，只显示一个可拖动复制按钮（无需开发者权限）
 // @match        *://*.girigirilove.com/*
-// @grant        GM_setClipboard
-// @grant        GM_notification
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -39,42 +37,74 @@
         node.childNodes.forEach(scanDOM);
     }
 
-    // 创建小按钮
+    // 复制功能（无 GM_setClipboard）
+    async function copyToClipboard(text) {
+        try {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                await navigator.clipboard.writeText(text);
+            } else {
+                // 兼容旧浏览器
+                const textarea = document.createElement('textarea');
+                textarea.value = text;
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+            }
+            return true;
+        } catch (e) {
+            console.error('复制失败:', e);
+            return false;
+        }
+    }
+
+    // 创建按钮
     function createButton() {
         if (document.getElementById('m3u8-copy-btn')) return;
 
         const btn = document.createElement('button');
         btn.id = 'm3u8-copy-btn';
         btn.textContent = '📋 Copy M3U8';
-        // 读取保存的位置
-        let pos = JSON.parse(localStorage.getItem('m3u8-btn-pos') || '{}');
-        let bottom = pos.bottom || 20;
-        let right = pos.right || 20;
+
+        // 恢复按钮位置
+        const pos = JSON.parse(localStorage.getItem('m3u8-btn-pos') || '{}');
+        const bottom = pos.bottom || 20;
+        const right = pos.right || 20;
+
         btn.style.cssText = `
             position: fixed; bottom: ${bottom}px; right: ${right}px; z-index: 9999;
             background: #4CAF50; color: white; border: none;
             padding: 8px 12px; border-radius: 6px; cursor: pointer;
             font-size: 14px; box-shadow: 0 3px 6px rgba(0,0,0,0.3);
-            user-select: none;
+            user-select: none; transition: background 0.3s;
         `;
-        btn.onclick = () => {
+
+        // 点击复制
+        btn.onclick = async () => {
             if (foundUrls.size === 0) {
-                GM_notification({ title: 'M3U8 Extractor', text: 'No links found' });
+                btn.textContent = '⚠️ No links';
+                btn.style.background = '#b71c1c';
+                setTimeout(() => {
+                    btn.textContent = '📋 Copy M3U8';
+                    btn.style.background = '#4CAF50';
+                }, 1500);
                 return;
             }
-            const urls = Array.from(foundUrls).map(url =>
-                url.replace(REMOVE_PREFIX, '')
-            ).join('\n');
-            GM_setClipboard(urls);
-            GM_notification({
-                title: 'M3U8 Extractor',
-                text: `${foundUrls.size} cleaned links copied`
-            });
+
+            const urls = Array.from(foundUrls).map(url => url.replace(REMOVE_PREFIX, '')).join('\n');
+            const ok = await copyToClipboard(urls);
+
+            btn.textContent = ok ? '✅ Copied!' : '❌ Copy Failed';
+            btn.style.background = ok ? '#2e7d32' : '#b71c1c';
+            setTimeout(() => {
+                btn.textContent = '📋 Copy M3U8';
+                btn.style.background = '#4CAF50';
+            }, 1500);
         };
 
         // 拖动功能
         let isDragging = false, startX, startY, startBottom, startRight;
-        btn.addEventListener('mousedown', function(e) {
+        btn.addEventListener('mousedown', e => {
             isDragging = true;
             startX = e.clientX;
             startY = e.clientY;
@@ -82,20 +112,19 @@
             startRight = parseInt(btn.style.right);
             document.body.style.userSelect = 'none';
         });
-        document.addEventListener('mousemove', function(e) {
+        document.addEventListener('mousemove', e => {
             if (!isDragging) return;
-            let dY = e.clientY - startY;
-            let dX = e.clientX - startX;
-            let newBottom = Math.max(0, startBottom - dY);
-            let newRight = Math.max(0, startRight - dX);
+            const dY = e.clientY - startY;
+            const dX = e.clientX - startX;
+            const newBottom = Math.max(0, startBottom - dY);
+            const newRight = Math.max(0, startRight - dX);
             btn.style.bottom = newBottom + 'px';
             btn.style.right = newRight + 'px';
         });
-        document.addEventListener('mouseup', function(e) {
+        document.addEventListener('mouseup', () => {
             if (isDragging) {
                 isDragging = false;
                 document.body.style.userSelect = '';
-                // 保存位置
                 localStorage.setItem('m3u8-btn-pos', JSON.stringify({
                     bottom: parseInt(btn.style.bottom),
                     right: parseInt(btn.style.right)
@@ -117,10 +146,7 @@
                 if (mutation.addedNodes.length > 0) updated = true;
             });
             if (updated && foundUrls.size > 0) createButton();
-        }).observe(document, {
-            childList: true,
-            subtree: true
-        });
+        }).observe(document, { childList: true, subtree: true });
     }
 
     window.addEventListener('load', main, false);
